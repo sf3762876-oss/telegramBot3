@@ -1,6 +1,8 @@
+# bot.py
+# Версия с сохранением данных игроков через SQLite
+
 import asyncio
 import sqlite3
-from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
@@ -22,13 +24,7 @@ CREATE TABLE IF NOT EXISTS players(
     bio TEXT DEFAULT '',
     rank TEXT DEFAULT 'Игрок',
     warns INTEGER DEFAULT 0,
-    mute_until TEXT DEFAULT ''
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS admins(
-    tg_id INTEGER PRIMARY KEY
+    mute TEXT DEFAULT ''
 )
 """)
 
@@ -40,26 +36,34 @@ CREATE TABLE IF NOT EXISTS bugs(
 )
 """)
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS admins(
+    id INTEGER PRIMARY KEY
+)
+""")
+
 db.commit()
 
 rules_text = "📜 Правила:\n1. Без читов\n2. Без грифа\n3. Уважать игроков"
 
 
 def is_admin(user_id):
-    return user_id == ADMIN_ID or cur.execute(
-        "SELECT tg_id FROM admins WHERE tg_id=?",
+    if user_id == ADMIN_ID:
+        return True
+    return cur.execute(
+        "SELECT id FROM admins WHERE id=?",
         (user_id,)
-    ).fetchone()
+    ).fetchone() is not None
 
 
 @dp.message(Command("start"))
 async def start(message: Message):
     await message.answer(
-        "👋 Меню бота:\n\n"
+        "👋 Главное меню\n\n"
         "/help - команды\n"
+        "/profile - профиль\n"
         "/players - игроки\n"
-        "/rules - правила\n"
-        "/rank - мой ранг"
+        "/rules - правила"
     )
 
 
@@ -69,17 +73,16 @@ async def help_cmd(message: Message):
         "📚 Команды:\n\n"
         "/setnick <ник>\n"
         "/setbio <текст>\n"
-        "/nimi <ник>\n"
-        "/players\n"
+        "/profile\n"
         "/rank\n"
+        "/players\n"
         "/rules\n"
-        "/bug <описание бага>\n\n"
+        "/bug <описание>\n\n"
         "Админ:\n"
         "/setrules <текст>\n"
         "/giverank <ник> <ранг>\n"
-        "/warn <ID> <причина>\n"
-        "/mute <ID> <минуты>\n"
-        "/bugs"
+        "/warn <ID>\n"
+        "/mute <ID>"
     )
 
 
@@ -87,12 +90,13 @@ async def help_cmd(message: Message):
 async def setnick(message: Message):
     a = message.text.split(maxsplit=1)
     if len(a) < 2:
-        return await message.answer("Используй /setnick Ник")
+        return await message.answer("/setnick Ник")
 
     cur.execute("""
     INSERT INTO players(tg_id,nickname)
     VALUES(?,?)
-    ON CONFLICT(tg_id) DO UPDATE SET nickname=excluded.nickname
+    ON CONFLICT(tg_id)
+    DO UPDATE SET nickname=excluded.nickname
     """, (message.from_user.id, a[1]))
 
     db.commit()
@@ -103,32 +107,62 @@ async def setnick(message: Message):
 async def setbio(message: Message):
     a = message.text.split(maxsplit=1)
     if len(a) < 2:
-        return await message.answer("Используй /setbio текст")
+        return await message.answer("/setbio текст")
 
-    cur.execute("UPDATE players SET bio=? WHERE tg_id=?",
-                (a[1], message.from_user.id))
+    cur.execute(
+        "UPDATE players SET bio=? WHERE tg_id=?",
+        (a[1], message.from_user.id)
+    )
     db.commit()
     await message.answer("✅ Описание сохранено")
+
+
+@dp.message(Command("profile"))
+async def profile(message: Message):
+    row = cur.execute(
+        "SELECT nickname,bio,rank,warns,mute FROM players WHERE tg_id=?",
+        (message.from_user.id,)
+    ).fetchone()
+
+    if not row:
+        return await message.answer("❌ Сначала установи ник")
+
+    await message.answer(
+        f"👤 Профиль\n\n"
+        f"Ник: {row[0]}\n"
+        f"⭐ Ранг: {row[2]}\n"
+        f"⚠️ Варны: {row[3]}\n"
+        f"🔇 Мут: {row[4] or 'нет'}\n"
+        f"📖 Описание: {row[1]}"
+    )
 
 
 @dp.message(Command("rank"))
 async def rank(message: Message):
     row = cur.execute(
-        "SELECT nickname,rank FROM players WHERE tg_id=?",
+        "SELECT rank FROM players WHERE tg_id=?",
         (message.from_user.id,)
     ).fetchone()
 
     await message.answer(
-        f"⭐ {row[0]} — {row[1]}" if row else "Нет профиля"
+        f"⭐ Твой ранг: {row[0]}" if row else "Нет профиля"
     )
 
 
 @dp.message(Command("players"))
 async def players(message: Message):
-    rows = cur.execute("SELECT nickname,rank FROM players").fetchall()
+    rows = cur.execute(
+        "SELECT nickname,rank FROM players"
+    ).fetchall()
+
+    if not rows:
+        return await message.answer("Игроков нет")
+
     await message.answer(
-        "\n".join(f"{i}. {x[0]} ⭐ {x[1]}" for i,x in enumerate(rows,1))
-        if rows else "Игроков нет"
+        "\n".join(
+            f"{i}. {x[0]} ⭐ {x[1]}"
+            for i, x in enumerate(rows, 1)
+        )
     )
 
 
@@ -140,10 +174,12 @@ async def rules(message: Message):
 @dp.message(Command("setrules"))
 async def setrules(message: Message):
     global rules_text
+
     if not is_admin(message.from_user.id):
         return await message.answer("❌ Нет доступа")
 
     a = message.text.split(maxsplit=1)
+
     if len(a) < 2:
         return await message.answer("/setrules текст")
 
@@ -157,38 +193,37 @@ async def giverank(message: Message):
         return await message.answer("❌ Нет доступа")
 
     a = message.text.split()
+
     if len(a) < 3:
         return await message.answer("/giverank Ник Ранг")
 
-    cur.execute("UPDATE players SET rank=? WHERE nickname=?",
-                (a[2], a[1]))
+    cur.execute(
+        "UPDATE players SET rank=? WHERE nickname=?",
+        (a[2], a[1])
+    )
     db.commit()
+
     await message.answer("✅ Ранг изменён")
 
 
 @dp.message(Command("bug"))
 async def bug(message: Message):
     a = message.text.split(maxsplit=1)
+
     if len(a) < 2:
         return await message.answer("/bug описание")
 
-    cur.execute("INSERT INTO bugs(user_id,text) VALUES(?,?)",
-                (message.from_user.id, a[1]))
+    cur.execute(
+        "INSERT INTO bugs(user_id,text) VALUES(?,?)",
+        (message.from_user.id, a[1])
+    )
     db.commit()
+
     await message.answer("🐛 Баг отправлен")
 
 
-@dp.message(Command("bugs"))
-async def bugs(message: Message):
-    if not is_admin(message.from_user.id):
-        return await message.answer("❌ Нет доступа")
-
-    rows = cur.execute("SELECT text FROM bugs").fetchall()
-    await message.answer("\n".join(x[0] for x in rows) if rows else "Багов нет")
-
-
 async def main():
-    print("🤖 Бот запущен")
+    print("Бот запущен")
     await dp.start_polling(bot)
 
 
