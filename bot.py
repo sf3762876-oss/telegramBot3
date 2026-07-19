@@ -136,7 +136,7 @@ async def rank(message: Message):
 @dp.message(Command("setrules"))
 async def setrules(message: Message):
     global rules_text
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id != ADMIN_ID:8870697062
         return await message.answer("❌ Нет доступа")
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
