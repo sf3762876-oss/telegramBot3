@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 TOKEN = "8732981892:AAGYHoCOoC7ySdyg-51dnT5Fq8PIt1xHH4I"
-
+ADMIN_ID = 8870697062
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
@@ -136,7 +136,7 @@ async def rank(message: Message):
 @dp.message(Command("setrules"))
 async def setrules(message: Message):
     global rules_text
-    if message.from_user.id != ADMIN_ID:8870697062
+    if message.from_user.id != ADMIN_ID:
         return await message.answer("❌ Нет доступа")
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
